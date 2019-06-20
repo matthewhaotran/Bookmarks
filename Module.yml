@@ -43,6 +43,12 @@ Items:
         Invoke: DeleteBookmark
       - Api: GET:/preview/{id}
         Invoke: GetBookmarkPreview
+      - Api: GET:/types
+        Invoke: GetBookmarkTypes
+      - Api: GET:/types/{type}
+        Invoke: GetBookmarksByTypes
+      - Api: GET:/redirect/{id}
+        Invoke: GetRedirectById
 
   - Variable: ApiUrl
     Description: API Gateway URL

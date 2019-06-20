@@ -34,4 +34,18 @@ namespace LambdaSharp.Challenge.Bookmarker.ApiFunctions {
         [JsonRequired]
         public bool Deleted;
     }
+
+    public class GetBookmarkTypesResponse {
+
+        //--- Properties ---
+        [JsonRequired]
+        public string[] Types;
+    }
+
+    public class GetBookmarksByTypeResponse {
+
+        //--- Properties ---
+        [JsonRequired]
+        public List<Bookmark> Bookmarks = new List<Bookmark>();
+    }
 }

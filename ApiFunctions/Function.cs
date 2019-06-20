@@ -9,6 +9,10 @@ using Amazon.Lambda.APIGatewayEvents;
 using OpenGraphNet;
 using LambdaSharp.ApiGateway;
 using LambdaSharp.Challenge.Bookmarker.Shared;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Linq;
 
 
 // Assembly attribute to enable the Lambda function's JSON input to be converted into a .NET class.
@@ -23,11 +27,13 @@ namespace LambdaSharp.Challenge.Bookmarker.ApiFunctions {
         private Table _table;
 
         public override async Task InitializeAsync(LambdaConfig config) {
+
             // initialize AWS clients
             _dynamoDbClient = new AmazonDynamoDBClient();
 
             // read settings
-            _table = Table.LoadTable(_dynamoDbClient, config.ReadDynamoDBTableName("BookmarksTable"));
+            var tableName = config.ReadDynamoDBTableName("BookmarksTable");
+            _table = Table.LoadTable(_dynamoDbClient, tableName);
         }
 
         public AddBookmarkResponse AddBookmark(AddBookmarkRequest request) {
@@ -36,7 +42,21 @@ namespace LambdaSharp.Challenge.Bookmarker.ApiFunctions {
             if (!Uri.TryCreate(request.Url, UriKind.Absolute, out url)) AbortBadRequest("Url Not Valid");
 
             // Level 1: generate a short ID that is still unique
-            var id = Guid.NewGuid().ToString("D");
+            var id = "1";
+            SHA256 mySHA256 = SHA256.Create();
+            byte[] hashValue = mySHA256.ComputeHash(Encoding.ASCII.GetBytes(request.Url));
+            var encoded = System.Convert.ToBase64String(hashValue).Replace('/', '_').Replace('+', '-');
+            for (int i = 3; i < 30; i++) {
+                var temporaryId = encoded.Substring(0,i);
+                var temporaryBookmark = RetrieveBookmark(temporaryId);
+                if(temporaryBookmark == null) {
+                    id = temporaryId;
+                    break;
+                } else if(temporaryBookmark.Url.ToString() == request.Url) {
+                    id = temporaryId;
+                    break;
+                }
+            }
             var bookmark = new Bookmark {
                 ID = id,
                 Url = url,
@@ -82,22 +102,74 @@ namespace LambdaSharp.Challenge.Bookmarker.ApiFunctions {
         public APIGatewayProxyResponse GetBookmarkPreview(string id) {
             LogInfo($"Get Bookmark Preview: ID={id}");
             var bookmark = RetrieveBookmark(id) ?? throw AbortNotFound("Bookmark not found");
+            var html = new StringBuilder();
+            html.Append($@"<html>");
 
-            var html = $@"<html>
-<head>
-    <title>{WebUtility.HtmlEncode(bookmark.Title)}</title>
-</head>
-<body style=""font-family: Helvetica, Arial, sans-serif;"">
-    <h1>{WebUtility.HtmlEncode(bookmark.Title)}</h1>
-</body>
-</html>
-";
+            // create head
+            html.Append($@"<head>");
+            html.Append($@"<title>{WebUtility.HtmlEncode(bookmark.Title)}</title>");
+            html.Append($@"<meta property=""og:title"" content=""{WebUtility.HtmlEncode(bookmark.Title)}"" />");
+            if(!string.IsNullOrEmpty(bookmark.Description)) {
+                html.Append($@"<meta property=""og:description"" content=""{WebUtility.HtmlEncode(bookmark.Description)}"" />");
+            }
+            if(bookmark.ImageUrl != null) {
+                html.Append($@"<meta property=""og:image"" content=""{WebUtility.HtmlEncode(bookmark.ImageUrl.ToString())}"" />");
+            }
+            if(bookmark.Type != null) {
+                html.Append($@"<meta property=""og:type"" content=""{WebUtility.HtmlEncode(bookmark.Type)}"" />");
+            }
+            html.Append($@"</head>");
+
+            // create body
+            html.Append($@"<body style=""font-family: Helvetica, Arial, sans-serif;"">");
+            html.Append($@"<h1>{WebUtility.HtmlEncode(bookmark.Title)}</h1>");
+            if(!string.IsNullOrEmpty(bookmark.Description)) {
+                html.Append($@"<p>{WebUtility.HtmlEncode(bookmark.Description)}</p>");
+            }
+            if(bookmark.ImageUrl != null) {
+                html.Append($@"<img src=""{WebUtility.HtmlEncode(bookmark.ImageUrl.ToString())}"" />");
+            }
+            html.Append($@"</body>");
+            html.Append($@"</html>");
+
+            // send response
             return new APIGatewayProxyResponse{
-                Body = html,
+                Body = html.ToString(),
                 StatusCode = 200,
                 Headers = new Dictionary<string,string>(){
-                    {"Content-Type", "text/html"},
+                    ["Content-Type"] = "text/html",
                 },
+            };
+        }
+
+        public APIGatewayProxyResponse GetRedirectById (string id) {
+            var bookmark = RetrieveBookmark(id) ?? throw AbortNotFound("Bookmark not found");
+            return new APIGatewayProxyResponse{
+                StatusCode = 302,
+                Headers = new Dictionary<string,string>(){
+                    ["Location"] = bookmark.Url.ToString()
+                }
+            };
+        }
+        
+        public GetBookmarkTypesResponse GetBookmarkTypes() {
+            var records = _table.Scan(new ScanFilter());
+            return new GetBookmarkTypesResponse {
+                Types = records.Matches
+                    .Select(doc => DeserializeJson<Bookmark>(doc.ToJson()))
+                    .Select(bookmark => bookmark.Type)
+                    .Distinct()
+                    .ToArray()
+            };
+        }
+
+        public GetBookmarksByTypeResponse GetBookmarksByTypes(string type) {
+            var records = _table.Scan(new ScanFilter());
+            return new GetBookmarksByTypeResponse {
+                Bookmarks = records.Matches
+                    .Select(doc => DeserializeJson<Bookmark>(doc.ToJson()))
+                    .Where(bookmark => bookmark.Type == type)
+                    .ToList()
             };
         }
 
