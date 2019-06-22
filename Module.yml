@@ -1,5 +1,4 @@
 Module: LambdaSharp.Challenge.Bookmarker
-Version: 1.0-DEV
 Description: Bookmark Manager with URL shortener and preview features.
 Items:
 
@@ -7,8 +6,9 @@ Items:
     Scope: all
     Description: DynamoDB for storing all the bookmark data
     Type: AWS::DynamoDB::Table
-    Allow: Subscribe
-    Allow: ReadWrite
+    Allow:
+      - Subscribe
+      - ReadWrite
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
@@ -22,7 +22,7 @@ Items:
 
   - Function: DynamoFunction
     Description: This function is invoked by a DynamoDB stream when a new bookmark is added
-    Memory: 128
+    Memory: 256
     Timeout: 60
     Sources:
       - DynamoDB: BookmarksTable
@@ -35,18 +35,25 @@ Items:
     Sources:
       - Api: POST:/bookmarks
         Invoke: AddBookmark
+
       - Api: GET:/bookmarks/{id}
         Invoke: GetBookmark
+
       - Api: GET:/bookmarks
         Invoke: GetBookmarks
+
       - Api: DELETE:/bookmarks/{id}
         Invoke: DeleteBookmark
+
       - Api: GET:/preview/{id}
         Invoke: GetBookmarkPreview
+
       - Api: GET:/types
         Invoke: GetBookmarkTypes
+
       - Api: GET:/types/{type}
         Invoke: GetBookmarksByTypes
+
       - Api: GET:/redirect/{id}
         Invoke: GetRedirectById
 

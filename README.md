@@ -1,14 +1,15 @@
-# LambdaSharp Bookmarker
+# λ# Challenge - Bookmarker
 
-## About this challenge
-The challenge is to build a Bookmarking API that allows one to save, retreive, share, and preview links.
+This is a solution to the [λ# hackathon challenge](https://www.meetup.com/lambdasharp/) from June 19th, 2019.
+
+## Overview
+The challenge was to build a _Bookmarking API_ that allows saving, retrieving, sharing, and previewing of links.
 
 ### Infrastructure:
 * [AWS DynamoDB](https://aws.amazon.com/dynamodb/) database for Bookmark data.
 * [AWS API Gateway](https://aws.amazon.com/api-gateway/) implements Bookmark REST API
 * [AWS Lambda](https://aws.amazon.com/lambda/) runs business logic invoked by API Gateway and DynamoDB Streams.
-* [MindTouch LambdaSharp Tool](https://lambdasharp.net/articles/ReleaseNotes-Favorinus.html) build and deploy clouldformation stack and assets to AWS.
-
+* [λ# Tool](https://lambdasharp.net/articles/ReleaseNotes-Favorinus.html) build and deploy CloudFormation stack and assets to AWS.
 
 #### Bookmark Schema
 ```json
@@ -22,59 +23,45 @@ The challenge is to build a Bookmarking API that allows one to save, retreive, s
 ```
 
 ## Setup - .NET Core and AWS
-
 * [Install .Net 2.1](https://dotnet.microsoft.com/download/dotnet-core/2.1)
 * [Sign up for AWS account](https://aws.amazon.com/)
 * [Install AWS CLI](https://aws.amazon.com/cli/)
 
+## Setup - λ# Tool (aka `lash`)
 
-## Setup - LambdaSharp Tool (aka `lash`)
+For this challenge, we will be using a pre-release version of the λ# Tool that is easier to configure and use.
 
-For this challenge, we will be using a pre-release version of the LambdaSharp Tool
-that is easier to configure and use.
-
-### Upgrade `lash`
-
-If you already have the LambdaSharp Tool installed, unfortunately you cannot  simply upgrade it to a pre-release version. First, you have to uninstall the previous version, then install the new version.
-
-    ```
-    dotnet tool uninstall -g LambdaSharp.Tool
-    dotnet tool install -g LambdaSharp.Tool --version 0.7-RC3
-    ```
-
-### Install `lash`
-
-    ```
-    dotnet tool install -g LambdaSharp.Tool --version 0.7-RC3
-    ```
-
-
-### Clone Bookmarker repository
+If you have an earlier version of the λ# Tool installed, you will need to [uninstall it](https://docs.microsoft.com/en-us/dotnet/core/tools/dotnet-tool-uninstall) before upgrading. Make sure to specify the exact version when installing the λ# Tool.
 
 ```
-git clone git@github.com:LambdaSharp/Bookmarks.git
+dotnet tool install -g LambdaSharp.Tool --version 0.7-RC3
 ```
 
-### Build and Deploy
+### Clone, Build, and Deploy Bookmarker
+
+Begin by cloning the [Bookmarker GitHub repository](https://github.com/bjorg/Bookmarker).
 
 ```
-cd Bookmarks
-lash init --quick-start     // one time
-lash deploy                 // to propagate code changes
+git clone git@github.com:bjorg/Bookmarker.git
 ```
 
-## Level 0 -- Add URL to DynamoDB
-Invoke the POST endpoint of the API Gateway that was created when you ran `lash deploy` to add a URL to DynamoDB. You can do this through the Postman collection that is provided or through a Curl command in your terminal. You will need to grab the `ApiUrl: API Gateway URL` that is printed at the end of the `lash deploy` command. 
+The hop into the folder to initialize λ# and deploy the Bookmarker module.
 
-### Postman
-* Import the [collection](./postman_collection.json) into Postman by clicking the `Import` button on the top left of the application. 
+```bash
+cd Bookmarker
+lash init --quick-start     # one time
+lash deploy                 # to propagate code changes
+```
 
-* Add a Global variable `bookmark_api`, and set the value to the `ApiUrl` that was printed. 
+## Testing
+Once the λ# module is deployed, you can test functionality of the REST API endpoints either using [Postman](https://www.getpostman.com/) or [cURL](https://curl.haxx.se/).
 
-* Run the `New Bookmark` request. 
+### Using Postman
+* Import the [collection](./postman_collection.json) into Postman by clicking the `Import` button on the top left of the application.
+* Add a collection variable `bookmark_api`, and set the value to the `ApiUrl` that was printed.
+* Run the `New Bookmark` request.
 
-
-### Curl
+### Using cURL
 ```
 curl -X POST \
   https://{YOUR_API_GATEWAY_URL}/LATEST/bookmarks \
@@ -84,33 +71,43 @@ curl -X POST \
 }'
 ```
 
-## Level 1 -- Support Short URLs
+## Solution
 
-Currently, bookmarks are created with a 37-character id (a `guid`) like `10cffe9e-ace5-444c-836b-635e6ec207d3`. Modify the `POST AddBookmark` API endpoint to instead use a short ID that is still unique. This will allow a future version of our Bookmark service to generate short urls like `https://bookmark.er/xYq`.
+### Shortening the URL
+For the shortening of the bookmarked URL, we opted to compute the Base64-encoded SHA256 hash of the URL, and then use as few characters of it as needed to find a unique ID.
 
-Ideally, you would NOT use a simple sequential integer as that would allow our competitors to know how many bookmarks are in our system.
+To avoid multiple round-trips to the DynamoDB table, we decided to fetch all candidate keys in a single batch read operation. With this approach, it was possible to find an existing mapping or the next available key in a single DynamoDB round-trip. A further optimization was to retrieve only the `ID` and `Url` of the fetched rows.
 
-## Level 2 -- Save OpenGraph Data
+Note this implementation is missing a conditional row-insert operation to avoid a race condition where two different URLs could be shortened to the same available ID. This is left as an exercise to the reader.
 
-When a new bookmark is added to DynamoDB, it will only store the ID and Url. However, we want to record more information about our Bookmark in order to support a preview feature (Level 3). On an insert into our DynamoDB table, the lambda function `DynamoFunction` will be triggered.
+### Fetching Open Graph Metadata
+For the `DynamoFunction`, which fetches the [Open Graph metadata](http://ogp.me/), we used the  [OpenGraphNet](https://github.com/ghorsey/OpenGraph-Net) library. In addition, we took advantage of the [`ALambdaFunction.RunTask()`](https://lambdasharp.net/sdk/LambdaSharp.ALambdaFunction.html#LambdaSharp_ALambdaFunction_RunTask_System_Action_System_Threading_CancellationToken_) helper method to safely schedule multiple, concurrent operations in our Lambda function.
 
-Modify that function to retrieve the [OpenGraph](https://github.com/ghorsey/OpenGraph-Net)  data from the URL and update the Bookmark in DynamoDB to include the following fields: Title, Description, and ImageUrl.
+### Generating the Preview
+For the preview, we had hoped to use the `OpenGraph.MakeGraph()` helper method, but it throws an exception for missing metadata properties and was therefore not suitable. Instead, we generated the output by hand using the `WebUtility.HtmlEncode()` where needed.
 
-[Retrieving OpenGraph Data from a URL](https://github.com/ghorsey/OpenGraph-Net#parsing-from-a-url)
-
-## Level 3 -- Generate HTML Preview
-
-Modify the API Gateway lambda function `GetBookmarkPreview` to return an HTML preview of a Bookmark. The HTML should include OpenGraph MetaData tags so that the preview renders correctly when the preview URL is shared in apps such as Slack, iMessage, etc.
-
-[Writing out OpenGraph Example](https://github.com/ghorsey/OpenGraph-Net#writing-out-opengraph-metadata-to-the-head-tag)
+```html
+<html>
+    <head prefix="og:http://ogp.me/ns#">
+        <title>The Dream Smartphone! (2019)</title>
+        <meta property="og:title" content="The Dream Smartphone! (2019)">
+        <meta property="og:type" content="video.other">
+        <meta property="og:image" content="https://i.ytimg.com/vi/M5NVwuyk2uM/maxresdefault.jpg">
+        <meta property="og:url" content="https://www.youtube.com/watch?v=M5NVwuyk2uM">
+        <meta property="og:description" content="The impossible dream of the perfect smartphone in 2019! Special thanks to ConceptsCreator: http://youtube.com/Conceptcreator The Dream Smartphone 2014: https...">
+        <meta property="og:site_name" content="www.youtube.com">
+    </head>
+    <body style="font-family: Helvetica, Arial, sans-serif;">
+        <h1>The Dream Smartphone! (2019)</h1>
+        <p>The impossible dream of the perfect smartphone in 2019! Special thanks to ConceptsCreator: http://youtube.com/Conceptcreator The Dream Smartphone 2014: https...</p>
+        <img src="https://i.ytimg.com/vi/M5NVwuyk2uM/maxresdefault.jpg" />
+    </body>
+</html>
+```
 
 ![sharing screenshot](./img/slack_screenshot.png)
 
 
-## Level 4 -- Add Redirector
+### Generating the Redirect
+For the redirect behavior, we use the `APIGatewayProxyResponse` return type to provide a response with a `HTTP 302 Found` status code and a `Location` header to redirect the browser to the original URL.
 
-Modfy `Module.yml` file to add a new API endpoint called `GET:/redirect/{id}` which invokes a method that performs an HTTP redirect to the original Bookmark url.
-
-## Boss Level -- Add Categories
-
-Extend the Bookmark data model to include a list of categories that are relevant to the Bookmark. Your job is to figure out how to get the list of categories.
